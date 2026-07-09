@@ -1,0 +1,42 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/bin/env sh -lc 'script=$(ls -dt \"${CODEX_HOME:-$HOME/.codex}\"/plugins/cache/*/usage-guard/*/scripts/usage_guard_once.py 2>/dev/null | head -n 1); [ -n \"$script\" ] || exit 0; exec /usr/bin/env python3 \"$script\" --source PreToolUse --settle-timeout-ms 400 --settle-interval-ms 100'",
+            "timeout": 5,
+            "statusMessage": "Checking Codex usage"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "*",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/bin/env sh -lc 'script=$(ls -dt \"${CODEX_HOME:-$HOME/.codex}\"/plugins/cache/*/usage-guard/*/scripts/usage_guard_once.py 2>/dev/null | head -n 1); [ -n \"$script\" ] || exit 0; exec /usr/bin/env python3 \"$script\" --source PostToolUse --settle-timeout-ms 400 --settle-interval-ms 100'",
+            "timeout": 5,
+            "statusMessage": "Checking Codex usage"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/usr/bin/env sh -lc 'script=$(ls -dt \"${CODEX_HOME:-$HOME/.codex}\"/plugins/cache/*/usage-guard/*/scripts/usage_guard_once.py 2>/dev/null | head -n 1); [ -n \"$script\" ] || exit 0; exec /usr/bin/env python3 \"$script\" --source Stop'",
+            "timeout": 15,
+            "statusMessage": "Checking Codex usage"
+          }
+        ]
+      }
+    ]
+  }
+}

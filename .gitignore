@@ -1,0 +1,27 @@
+# macOS
+.DS_Store
+
+# Editors
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Local Codex state and runtime output
+.codex/
+/usage-guard/
+*.log
+*.log.jsonl
+
+# Environment and secrets
+.env
+.env.*
+*.pem
+*.key
