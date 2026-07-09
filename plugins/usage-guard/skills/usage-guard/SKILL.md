@@ -65,6 +65,7 @@ Change the threshold by editing `state/config.json`:
   "settle_interval_ms": 200,
   "log_below_threshold": false,
   "notify": true,
+  "notify_on_redeem_success": false,
   "auto_redeem": false,
   "redeem_strategy": "chatgpt_backend",
   "redeem_command": null,

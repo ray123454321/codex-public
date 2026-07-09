@@ -116,6 +116,7 @@ Default config:
   "settle_interval_ms": 200,
   "log_below_threshold": false,
   "notify": true,
+  "notify_on_redeem_success": false,
   "auto_redeem": false,
   "redeem_strategy": "chatgpt_backend",
   "redeem_command": null,
@@ -131,7 +132,9 @@ Useful settings:
 - `recent_seconds`: how far back to search for recent session files.
 - `settle_timeout_ms`: wait window for final turn accounting to settle.
 - `log_below_threshold`: write logs even when usage is below threshold.
-- `notify`: show a local notification when the threshold is reached.
+- `notify`: show local notifications for threshold alerts or redeem failures.
+- `notify_on_redeem_success`: also notify when auto redeem succeeds. Defaults
+  to false so successful auto redeem stays quiet.
 - `auto_redeem`: automatically try to redeem when the threshold is reached.
 - `redeem_strategy`: `chatgpt_backend` or `command`.
 - `chatgpt_backend_base`: backend base URL for the built-in strategy.

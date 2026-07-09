@@ -1,6 +1,6 @@
 {
   "name": "usage-guard",
-  "version": "0.1.0+codex.20260709115616",
+  "version": "0.1.0+codex.20260709120939",
   "description": "Callback-only Codex usage guard that checks structured rate-limit events after each turn.",
   "author": {
     "name": "Local developer"

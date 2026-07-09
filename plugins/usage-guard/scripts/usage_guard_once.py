@@ -48,6 +48,7 @@ DEFAULT_CONFIG = {
     "settle_interval_ms": 200,
     "log_below_threshold": False,
     "notify": True,
+    "notify_on_redeem_success": False,
     "auto_redeem": False,
     "redeem_strategy": "chatgpt_backend",
     "redeem_command": None,
@@ -247,6 +248,21 @@ def notify(title: str, message: str) -> None:
         subprocess.run(["/usr/bin/osascript", "-e", script], check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     except Exception:
         pass
+
+
+def notification_message(decision: dict[str, Any], window_name: str, used_percent: float) -> str | None:
+    action = decision.get("action")
+    if action == "redeem_attempted" and decision.get("redeem_ok") is True:
+        if decision.get("notify_on_redeem_success") is True:
+            return f"{window_name} usage reached {used_percent:.1f}%; reset credit redeemed."
+        return None
+    if action == "redeem_attempted":
+        return f"{window_name} usage is {used_percent:.1f}%; auto redeem failed."
+    if action == "notify_redeem_available":
+        return f"{window_name} usage is {used_percent:.1f}%; reset credit may be available."
+    if action == "notify_threshold":
+        return f"{window_name} usage is {used_percent:.1f}%; no reset credit visible."
+    return None
 
 
 def command_argv(command: Any) -> list[str]:
@@ -504,6 +520,7 @@ def main() -> int:
         decision["redeem_strategy"] = strategy
         decision["redeem_ok"] = ok
         decision["redeem_message"] = message
+        decision["notify_on_redeem_success"] = bool(config.get("notify_on_redeem_success"))
         if ok:
             decision["has_redeem_opportunity"] = True
     elif has_credit:
@@ -515,11 +532,9 @@ def main() -> int:
 
     append_log(decision)
     if config.get("notify") is True:
-        title = "Codex usage guard"
-        msg = f"{window_name} usage is {used_percent:.1f}%"
-        if has_credit:
-            msg += "; reset credit may be available. Run /usage to confirm."
-        notify(title, msg)
+        msg = notification_message(decision, window_name, used_percent)
+        if msg:
+            notify("Codex usage guard", msg)
     if args.print:
         print(json.dumps(decision, indent=2, sort_keys=True))
     return 0
