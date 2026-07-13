@@ -1,7 +1,7 @@
 {
   "name": "usage-guard",
-  "version": "0.1.0+codex.20260709120939",
-  "description": "Callback-only Codex usage guard that checks structured rate-limit events after each turn.",
+  "version": "0.1.0+codex.20260713022204",
+  "description": "Callback-only Codex usage guard with failed-redeem emergency handoff.",
   "author": {
     "name": "Local developer"
   },
@@ -9,7 +9,7 @@
   "interface": {
     "displayName": "Usage Guard",
     "shortDescription": "Check Codex usage after each turn.",
-    "longDescription": "Usage Guard installs a Stop hook that reads the latest structured Codex token_count event after each turn. It alerts when account usage crosses the configured threshold without running a daemon or polling loop.",
+    "longDescription": "Usage Guard reads structured Codex token_count events from lifecycle hooks, attempts a configured reset-credit redeem at 97%, and starts handoff.org if that redeem failed and usage later exceeds 98%. It runs without a daemon or polling loop.",
     "developerName": "Local developer",
     "category": "Productivity",
     "capabilities": [],

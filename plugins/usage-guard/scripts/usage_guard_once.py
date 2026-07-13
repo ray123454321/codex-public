@@ -42,7 +42,11 @@ STATE_PATH = STATE_DIR / "state.json"
 LOG_PATH = STATE_DIR / "usage_guard.log.jsonl"
 
 DEFAULT_CONFIG = {
+    "enabled": True,
     "threshold_percent": 97.0,
+    "handoff_on_redeem_failure": True,
+    "handoff_threshold_percent": 98.0,
+    "handoff_filename": "handoff.org",
     "recent_seconds": 900,
     "settle_timeout_ms": 3000,
     "settle_interval_ms": 200,
@@ -56,6 +60,9 @@ DEFAULT_CONFIG = {
     "chatgpt_backend_base": "https://chatgpt.com/backend-api",
     "auth_path": None,
 }
+
+HANDOFF_BEGIN = "# usage-guard:begin"
+HANDOFF_END = "# usage-guard:end"
 
 
 def load_json(path: Path, default: Any) -> Any:
@@ -177,6 +184,196 @@ def latest_token_count(path: Path) -> dict[str, Any] | None:
     return None
 
 
+def session_metadata(path: Path) -> dict[str, Any]:
+    """Read the immutable session metadata without loading the whole transcript."""
+    try:
+        with path.open() as fh:
+            for index, line in enumerate(fh):
+                if index >= 200:
+                    break
+                try:
+                    event = json.loads(line)
+                except Exception:
+                    continue
+                if event.get("type") == "session_meta" and isinstance(event.get("payload"), dict):
+                    return event["payload"]
+    except OSError:
+        pass
+    return {}
+
+
+def latest_user_request(path: Path, max_chars: int = 4000) -> str | None:
+    """Return the latest user-authored input text for a compact handoff starter."""
+    for line in iter_lines_reverse(path):
+        try:
+            event = json.loads(line)
+        except Exception:
+            continue
+        if event.get("type") != "response_item":
+            continue
+        payload = event.get("payload") or {}
+        if payload.get("type") != "message" or payload.get("role") != "user":
+            continue
+        texts = []
+        for item in payload.get("content") or []:
+            if isinstance(item, dict) and item.get("type") == "input_text" and isinstance(item.get("text"), str):
+                texts.append(item["text"])
+        text = "\n".join(texts).strip()
+        if text:
+            if len(text) > max_chars:
+                return text[:max_chars] + "...<truncated>"
+            return text
+    return None
+
+
+def find_named_string(obj: Any, names: set[str]) -> str | None:
+    if isinstance(obj, dict):
+        for key, value in obj.items():
+            if str(key).lower() in names and isinstance(value, str) and value.strip():
+                return value
+        for value in obj.values():
+            found = find_named_string(value, names)
+            if found:
+                return found
+    elif isinstance(obj, list):
+        for value in obj:
+            found = find_named_string(value, names)
+            if found:
+                return found
+    return None
+
+
+def handoff_path(config: dict[str, Any], session_file: Path, hook_payload: dict[str, Any]) -> Path:
+    filename = str(config.get("handoff_filename") or "handoff.org")
+    if Path(filename).name != filename or filename in {"", ".", ".."}:
+        raise RuntimeError("handoff_filename must be a plain filename")
+
+    metadata = session_metadata(session_file)
+    cwd_value = metadata.get("cwd")
+    if not isinstance(cwd_value, str) or not cwd_value.strip():
+        cwd_value = find_named_string(hook_payload, {"cwd", "working_directory", "workdir", "workspace_root"})
+    directory = Path(cwd_value).expanduser() if cwd_value else Path.cwd()
+    try:
+        directory = directory.resolve()
+    except OSError as exc:
+        raise RuntimeError(f"cannot resolve handoff directory {directory}: {exc}") from exc
+    if not directory.exists() or not directory.is_dir():
+        raise RuntimeError(f"handoff directory is not an existing directory: {directory}")
+    return directory / filename
+
+
+def org_literal(text: str | None) -> str:
+    if not text:
+        return ": <not available>"
+    safe = text.replace(HANDOFF_BEGIN, "usage-guard begin marker").replace(HANDOFF_END, "usage-guard end marker")
+    return "\n".join(f": {line}" if line else ":" for line in safe.splitlines())
+
+
+def handoff_block(
+    decision: dict[str, Any],
+    session_file: Path,
+    target_path: Path,
+    latest_request: str | None,
+    redeem_record: dict[str, Any],
+) -> str:
+    generated_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+    redeem_message = str(redeem_record.get("redeem_message") or "redeem failed without a recorded message")
+    if len(redeem_message) > 1000:
+        redeem_message = redeem_message[:1000] + "...<truncated>"
+    return "\n".join(
+        [
+            HANDOFF_BEGIN,
+            "* Usage Guard Emergency Handoff",
+            ":PROPERTIES:",
+            f":GENERATED_AT: {generated_at}",
+            f":USAGE_WINDOW: {decision.get('window') or 'unknown'}",
+            f":USED_PERCENT: {float(decision.get('used_percent') or 0.0):.1f}",
+            f":TRIGGER_KEY: {decision.get('trigger_key') or 'unknown'}",
+            ":REDEEM_STATUS: failed",
+            ":END:",
+            "",
+            "** Why this file was started",
+            "Usage crossed the emergency handoff threshold after the 97% reset-credit redeem attempt failed.",
+            "Preserve verified progress now so a fresh session can continue without repeating failed work.",
+            "",
+            "** Runtime context",
+            f"- Working directory :: {target_path.parent}",
+            f"- Session transcript :: {session_file}",
+            f"- Redeem failure :: {redeem_message}",
+            "",
+            "** Latest user request",
+            org_literal(latest_request),
+            "",
+            "** Required handoff action",
+            "Before continuing substantial work, record outside this managed block:",
+            "- completed changes and exact evidence;",
+            "- current state and any running processes;",
+            "- remaining steps in execution order;",
+            "- blockers, safety boundaries, and verification commands.",
+            HANDOFF_END,
+        ]
+    )
+
+
+def write_managed_handoff(path: Path, block: str) -> str:
+    """Create or replace only Usage Guard's managed block, preserving user notes."""
+    try:
+        existing = path.read_text() if path.exists() else ""
+    except OSError as exc:
+        raise RuntimeError(f"cannot read {path}: {exc}") from exc
+
+    begin_count = existing.count(HANDOFF_BEGIN)
+    end_count = existing.count(HANDOFF_END)
+    if begin_count != end_count or begin_count > 1:
+        raise RuntimeError(f"refusing to edit malformed managed markers in {path}")
+
+    if begin_count == 1:
+        start = existing.index(HANDOFF_BEGIN)
+        end = existing.index(HANDOFF_END, start) + len(HANDOFF_END)
+        updated = existing[:start] + block + existing[end:]
+        action = "handoff_refreshed"
+    elif existing:
+        updated = block + "\n\n" + existing
+        action = "handoff_written"
+    else:
+        updated = block + "\n"
+        action = "handoff_written"
+
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_name(f".{path.name}.usage-guard.{os.getpid()}.{uuid.uuid4().hex}.tmp")
+    try:
+        tmp.write_text(updated)
+        tmp.replace(path)
+    except OSError as exc:
+        try:
+            tmp.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise RuntimeError(f"cannot write {path}: {exc}") from exc
+    return action
+
+
+def prior_redeem_result(trigger: str) -> dict[str, Any] | None:
+    """Migrate redeem evidence written by older versions into state lazily."""
+    if not LOG_PATH.exists():
+        return None
+    for line in iter_lines_reverse(LOG_PATH):
+        try:
+            entry = json.loads(line)
+        except Exception:
+            continue
+        if entry.get("trigger_key") != trigger or entry.get("action") != "redeem_attempted":
+            continue
+        if isinstance(entry.get("redeem_ok"), bool):
+            return {
+                "redeem_attempted": True,
+                "redeem_ok": entry["redeem_ok"],
+                "redeem_message": entry.get("redeem_message"),
+                "redeem_strategy": entry.get("redeem_strategy"),
+            }
+    return None
+
+
 def settled_token_count(path: Path, timeout_ms: int, interval_ms: int) -> dict[str, Any] | None:
     """Return the latest token_count after a short Stop-hook settle window."""
     deadline = time.time() + max(timeout_ms, 0) / 1000.0
@@ -252,6 +449,10 @@ def notify(title: str, message: str) -> None:
 
 def notification_message(decision: dict[str, Any], window_name: str, used_percent: float) -> str | None:
     action = decision.get("action")
+    if action in {"handoff_written", "handoff_refreshed"}:
+        return f"{window_name} usage is {used_percent:.1f}% after redeem failure; handoff.org was started."
+    if action == "handoff_failed":
+        return f"{window_name} usage is {used_percent:.1f}% after redeem failure; handoff.org could not be written."
     if action == "redeem_attempted" and decision.get("redeem_ok") is True:
         if decision.get("notify_on_redeem_success") is True:
             return f"{window_name} usage reached {used_percent:.1f}%; reset credit redeemed."
@@ -427,6 +628,53 @@ def attempt_redeem(config: dict[str, Any], rate_limits: dict[str, Any], window_n
         return False, f"redeem failed: {exc}"
 
 
+def maybe_start_handoff(
+    config: dict[str, Any],
+    decision: dict[str, Any],
+    session_file: Path,
+    hook_payload: dict[str, Any],
+    redeem_record: dict[str, Any],
+) -> bool:
+    """Start the task handoff only after a proven redeem failure and > threshold."""
+    if config.get("handoff_on_redeem_failure") is not True:
+        return False
+    if float(decision.get("used_percent") or 0.0) <= float(config.get("handoff_threshold_percent") or 98.0):
+        return False
+    if redeem_record.get("redeem_ok") is not False:
+        return False
+
+    try:
+        target = handoff_path(config, session_file, hook_payload)
+        decision["handoff_path"] = str(target)
+        recorded_path = redeem_record.get("handoff_path")
+        if redeem_record.get("handoff_started") is True and recorded_path == str(target) and target.exists():
+            decision["action"] = "handoff_active"
+            return False
+        block = handoff_block(
+            decision=decision,
+            session_file=session_file,
+            target_path=target,
+            latest_request=latest_user_request(session_file),
+            redeem_record=redeem_record,
+        )
+        action = write_managed_handoff(target, block)
+    except Exception as exc:
+        decision["action"] = "handoff_failed"
+        decision["handoff_error"] = str(exc)
+        return False
+
+    decision["action"] = action
+    redeem_record.update(
+        {
+            "handoff_started": True,
+            "handoff_path": str(target),
+            "handoff_started_at": decision["ts"],
+            "handoff_used_percent": decision["used_percent"],
+        }
+    )
+    return True
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--event-file", type=Path, help="Read this session JSONL file instead of discovering the latest one.")
@@ -442,6 +690,11 @@ def main() -> int:
     config = {**DEFAULT_CONFIG, **load_json(CONFIG_PATH, {})}
     state = load_json(STATE_PATH, {"triggered": {}})
     hook_payload = read_hook_stdin()
+
+    if config.get("enabled") is not True:
+        if args.print:
+            print(json.dumps({"action": "disabled", "source": args.source}, indent=2, sort_keys=True))
+        return 0
 
     session_file = args.event_file or latest_session_file(int(config["recent_seconds"]), hook_payload)
     decision: dict[str, Any] = {
@@ -498,14 +751,34 @@ def main() -> int:
 
     key = trigger_key(rate_limits, window_name)
     if key in state.get("triggered", {}):
+        record = state["triggered"][key]
+        if not isinstance(record, dict):
+            record = {"legacy_state": record}
+            state["triggered"][key] = record
+        if "redeem_ok" not in record:
+            migrated = prior_redeem_result(key)
+            if migrated:
+                record.update(migrated)
+                save_json(STATE_PATH, state)
         decision["action"] = "deduped"
         decision["trigger_key"] = key
+        maybe_start_handoff(config, decision, session_file, hook_payload, record)
+        save_json(STATE_PATH, state)
         append_log(decision)
+        if config.get("notify") is True:
+            msg = notification_message(decision, window_name, used_percent)
+            if msg:
+                notify("Codex usage guard", msg)
         if args.print:
             print(json.dumps(decision, indent=2, sort_keys=True))
         return 0
 
-    state.setdefault("triggered", {})[key] = {"ts": decision["ts"], "used_percent": used_percent}
+    record = {
+        "ts": decision["ts"],
+        "used_percent": used_percent,
+        "redeem_attempted": False,
+    }
+    state.setdefault("triggered", {})[key] = record
     save_json(STATE_PATH, state)
 
     has_credit = credits_available(rate_limits)
@@ -515,12 +788,17 @@ def main() -> int:
     should_try_redeem = config.get("auto_redeem") is True and (has_credit or strategy == "chatgpt_backend")
 
     if should_try_redeem:
+        record["redeem_attempted"] = True
+        record["redeem_strategy"] = strategy
+        save_json(STATE_PATH, state)
         ok, message = attempt_redeem(config, rate_limits, window_name, used_percent)
         decision["action"] = "redeem_attempted"
         decision["redeem_strategy"] = strategy
         decision["redeem_ok"] = ok
         decision["redeem_message"] = message
         decision["notify_on_redeem_success"] = bool(config.get("notify_on_redeem_success"))
+        record["redeem_ok"] = ok
+        record["redeem_message"] = message
         if ok:
             decision["has_redeem_opportunity"] = True
     elif has_credit:
@@ -529,6 +807,9 @@ def main() -> int:
     else:
         decision["action"] = "notify_threshold"
         decision["reason"] = "threshold reached; no reset credit visible in token_count event"
+
+    maybe_start_handoff(config, decision, session_file, hook_payload, record)
+    save_json(STATE_PATH, state)
 
     append_log(decision)
     if config.get("notify") is True:

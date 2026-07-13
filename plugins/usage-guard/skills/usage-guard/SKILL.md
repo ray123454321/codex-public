@@ -1,6 +1,6 @@
 ---
 name: usage-guard
-description: Inspect, configure, or troubleshoot the local Usage Guard Codex plugin that checks Codex account usage after each turn through a Stop hook without a daemon or polling loop.
+description: Inspect, configure, or troubleshoot the local Usage Guard Codex plugin that checks Codex account usage after each turn and starts handoff.org after a failed 97% redeem when usage exceeds 98%, without a daemon or polling loop.
 ---
 
 # Usage Guard
@@ -16,6 +16,7 @@ Usage Guard is callback-only:
 3. The script reads the freshest `token_count` event from `$CODEX_HOME/sessions/**/*.jsonl`.
 4. Tool-level callbacks use a short settle window to avoid slowing the agent loop; `Stop` uses a longer settle window to catch final turn accounting.
 5. If `primary` or `secondary` usage is at or above the configured threshold, it writes an audit log and optionally shows a macOS notification.
+6. If the reset-credit redeem fails and that same usage window later exceeds the configured handoff threshold, it starts a managed block in the active task's `handoff.org`.
 
 It intentionally does not run a daemon, tail files, or poll in a loop.
 
@@ -34,6 +35,17 @@ For environments that should not use the backend strategy, set `redeem_strategy`
 - One-shot checker: `scripts/usage_guard_once.py` inside the plugin.
 - Config: `${CODEX_HOME:-~/.codex}/usage-guard/config.json`.
 - Audit log: `${CODEX_HOME:-~/.codex}/usage-guard/usage_guard.log.jsonl`.
+- Emergency handoff: `<session_meta.cwd>/handoff.org` by default.
+
+## Emergency Handoff Semantics
+
+- The default redeem threshold is `97.0`.
+- The default handoff threshold is a strict `> 98.0`; exactly 98% does not write.
+- A handoff requires a persisted `redeem_ok=false` for the same reset-window trigger key.
+- Older failed-redeem audit entries are lazily migrated into state so an upgrade can act during the current window.
+- Usage Guard replaces only its `# usage-guard:begin` through `# usage-guard:end` block and preserves all other task notes.
+- If managed markers are malformed, the checker logs `handoff_failed` and does not overwrite the file.
+- A successful redeem or disabled auto redeem does not create a handoff.
 
 ## Common Commands
 
@@ -59,7 +71,11 @@ Change the threshold by editing `state/config.json`:
 
 ```json
 {
+  "enabled": true,
   "threshold_percent": 97.0,
+  "handoff_on_redeem_failure": true,
+  "handoff_threshold_percent": 98.0,
+  "handoff_filename": "handoff.org",
   "recent_seconds": 900,
   "settle_timeout_ms": 3000,
   "settle_interval_ms": 200,

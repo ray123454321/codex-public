@@ -9,7 +9,9 @@ This repository contains shareable Codex plugins and related assets.
 `usage-guard` is a callback-only Codex plugin that checks structured Codex usage
 events after tool calls and at turn stop time. It is designed to warn when a
 usage window crosses a configured threshold, without running a background
-daemon, file tailer, or polling loop.
+daemon, file tailer, or polling loop. If the 97% reset-credit redeem attempt
+fails and usage later exceeds 98%, it starts a task `handoff.org` in the active
+session's working directory.
 
 Current default threshold: `97%`.
 
@@ -29,6 +31,9 @@ plugins/usage-guard
    plugin writes an audit entry and can show a macOS notification.
 5. If structured usage data exposes reset-credit information, the plugin records
    whether a redeem opportunity appears to exist.
+6. If auto redeem fails and the same usage window later rises strictly above the
+   handoff threshold, the plugin creates or updates its managed block in
+   `handoff.org` without replacing existing task notes.
 
 The plugin intentionally exits after each callback. It does not stay resident.
 
@@ -64,6 +69,7 @@ already available to the logged-in account.
 |       |-- .codex-plugin/plugin.json
 |       |-- hooks/hooks.json
 |       |-- scripts/usage_guard_once.py
+|       |-- tests/test_usage_guard_once.py
 |       `-- skills/usage-guard/SKILL.md
 `-- README.md
 ```
@@ -110,7 +116,11 @@ Default config:
 
 ```json
 {
+  "enabled": true,
   "threshold_percent": 97.0,
+  "handoff_on_redeem_failure": true,
+  "handoff_threshold_percent": 98.0,
+  "handoff_filename": "handoff.org",
   "recent_seconds": 900,
   "settle_timeout_ms": 3000,
   "settle_interval_ms": 200,
@@ -128,7 +138,13 @@ Default config:
 
 Useful settings:
 
+- `enabled`: master switch for the one-shot checker.
 - `threshold_percent`: trigger threshold for primary or secondary usage.
+- `handoff_on_redeem_failure`: start an emergency task handoff after a failed
+  redeem when usage later exceeds the handoff threshold.
+- `handoff_threshold_percent`: strict lower bound for handoff creation. With the
+  default `98.0`, exactly 98% does not write; values above 98% do.
+- `handoff_filename`: plain filename written in the session metadata's `cwd`.
 - `recent_seconds`: how far back to search for recent session files.
 - `settle_timeout_ms`: wait window for final turn accounting to settle.
 - `log_below_threshold`: write logs even when usage is below threshold.
@@ -160,6 +176,34 @@ POST /wham/rate-limit-reset-credits/consume
 
 It sends the bearer token and account id from Codex `auth.json`. Tokens are not
 written to the audit log.
+
+## Emergency Task Handoff
+
+The handoff state is tied to the same rate-limit reset window as the failed
+redeem. The flow is:
+
+```text
+usage >= 97% -> attempt redeem once -> redeem fails
+usage == 98% -> no handoff yet
+usage > 98%  -> start handoff.org
+```
+
+The file location comes from the selected session JSONL's immutable
+`session_meta.cwd`. Hook payload working-directory fields and the checker
+process directory are only fallbacks.
+
+Usage Guard owns only the section between these markers:
+
+```text
+# usage-guard:begin
+# usage-guard:end
+```
+
+Existing content outside that block is preserved. The generated starter records
+the session transcript, usage window, redeem failure, latest user request, and
+the evidence that the active agent must add before continuing substantial work.
+Malformed or duplicate managed markers cause a fail-closed audit entry rather
+than overwriting the file.
 
 When `redeem_command` runs, Usage Guard passes these environment variables:
 
