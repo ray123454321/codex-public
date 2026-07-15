@@ -15,7 +15,11 @@ import sys
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
 SOURCE = PLUGIN_ROOT / "scripts" / "codex_keep_waiting.py"
 WRAPPER = Path("~/.local/bin/codex").expanduser()
-MARKETPLACE = PLUGIN_ROOT.parents[1] / ".agents" / "plugins" / "marketplace.json"
+SOURCE_MARKETPLACE = (
+    PLUGIN_ROOT.parents[1] / ".agents" / "plugins" / "marketplace.json"
+)
+EXPECTED_MARKETPLACE = "codex-public"
+EXPECTED_MARKETPLACE_SOURCE = "git@github.com:ray123454321/codex-public.git"
 MARKER = b"USAGE_GUARD_KEEP_WAITING_WRAPPER_MARKER_v1"
 ACTIVE_POLICY = {
     "enabled": True,
@@ -75,11 +79,16 @@ def main() -> int:
     checks["manifest_name"] = manifest.get("name")
     checks["manifest_version"] = manifest.get("version")
 
-    marketplace = json.loads(MARKETPLACE.read_text())
-    checks["marketplace_registered"] = any(
-        item.get("name") == "usage-guard"
-        for item in marketplace.get("plugins", [])
+    checks["source_marketplace_file"] = (
+        str(SOURCE_MARKETPLACE) if SOURCE_MARKETPLACE.is_file() else None
     )
+    marketplace_registered = False
+    if SOURCE_MARKETPLACE.is_file():
+        marketplace = json.loads(SOURCE_MARKETPLACE.read_text())
+        marketplace_registered = any(
+            item.get("name") == "usage-guard"
+            for item in marketplace.get("plugins", [])
+        )
 
     config_path = state_dir() / "config.json"
     config = json.loads(config_path.read_text()) if config_path.exists() else {}
@@ -136,6 +145,19 @@ def main() -> int:
                 checks["installed_plugin_id"] = installed_plugin.get("pluginId")
                 checks["installed_plugin_version"] = installed_plugin.get("version")
                 checks["installed_plugin_enabled"] = installed_plugin.get("enabled")
+                marketplace_source = installed_plugin.get("marketplaceSource") or {}
+                checks["installed_marketplace_source"] = marketplace_source.get(
+                    "source"
+                )
+                checks["installed_marketplace_current"] = bool(
+                    installed_plugin.get("marketplaceName") == EXPECTED_MARKETPLACE
+                    and marketplace_source.get("source")
+                    == EXPECTED_MARKETPLACE_SOURCE
+                )
+                marketplace_registered = bool(
+                    marketplace_registered
+                    or checks["installed_marketplace_current"]
+                )
                 checks["installed_plugin_current"] = bool(
                     installed_plugin.get("installed")
                     and installed_plugin.get("enabled")
@@ -158,6 +180,8 @@ def main() -> int:
         checks["wrapped_version"] = wrapped
         checks["version_passthrough"] = direct == wrapped
 
+    checks["marketplace_registered"] = marketplace_registered
+
     if args.full:
         test_environment = os.environ.copy()
         test_environment["USAGE_GUARD_WRAPPER_UNDER_TEST"] = str(WRAPPER)
@@ -177,6 +201,7 @@ def main() -> int:
         checks.get("wrapper_current") is True,
         checks.get("login_shell_uses_wrapper") is True,
         checks.get("diagnose_exit") == 0,
+        checks.get("installed_marketplace_current") is True,
         checks.get("installed_plugin_current") is True,
         checks.get("version_passthrough") is True,
     ]

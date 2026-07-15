@@ -1,6 +1,6 @@
 {
   "name": "usage-guard",
-  "version": "0.2.0+codex.20260715060102",
+  "version": "0.2.0+codex.20260715060918",
   "description": "Codex continuity guard for model retention, reset-credit reuse, and emergency handoff.",
   "author": {
     "name": "Local developer"
