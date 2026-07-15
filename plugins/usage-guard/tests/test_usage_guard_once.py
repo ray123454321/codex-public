@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 import subprocess
@@ -9,6 +10,19 @@ from pathlib import Path
 
 
 SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "usage_guard_once.py"
+SPEC = importlib.util.spec_from_file_location("usage_guard_once", SCRIPT)
+assert SPEC and SPEC.loader
+MODULE = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(MODULE)
+
+
+class UsageGuardDefaultPolicyTest(unittest.TestCase):
+    def test_default_policy_matches_three_continuity_responsibilities(self) -> None:
+        self.assertTrue(MODULE.DEFAULT_CONFIG["enabled"])
+        self.assertEqual(MODULE.DEFAULT_CONFIG["threshold_percent"], 97.0)
+        self.assertTrue(MODULE.DEFAULT_CONFIG["auto_redeem"])
+        self.assertTrue(MODULE.DEFAULT_CONFIG["handoff_on_redeem_failure"])
+        self.assertEqual(MODULE.DEFAULT_CONFIG["handoff_threshold_percent"], 98.0)
 
 
 class UsageGuardHandoffTest(unittest.TestCase):

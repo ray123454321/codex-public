@@ -1,18 +1,22 @@
 {
   "name": "usage-guard",
-  "version": "0.1.0+codex.20260713022204",
-  "description": "Callback-only Codex usage guard with failed-redeem emergency handoff.",
+  "version": "0.2.0+codex.20260715060102",
+  "description": "Codex continuity guard for model retention, reset-credit reuse, and emergency handoff.",
   "author": {
     "name": "Local developer"
   },
   "skills": "./skills/",
   "interface": {
-    "displayName": "Usage Guard",
-    "shortDescription": "Check Codex usage after each turn.",
-    "longDescription": "Usage Guard reads structured Codex token_count events from lifecycle hooks, attempts a configured reset-credit redeem at 97%, and starts handoff.org if that redeem failed and usage later exceeds 98%. It runs without a daemon or polling loop.",
+    "displayName": "Usage & Continuity Guard",
+    "shortDescription": "Keep Codex capable, resettable, and ready to hand off.",
+    "longDescription": "Usage Guard keeps the current model during Additional safety checks, automatically consumes an available reset credit at 97%, and prepares handoff.org if that redeem failed and usage later exceeds 98%.",
     "developerName": "Local developer",
     "category": "Productivity",
-    "capabilities": [],
-    "defaultPrompt": "Inspect Usage Guard status and recent alerts."
+    "capabilities": [
+      "Keep current model during safety buffering",
+      "Automatic reset-credit consumption",
+      "Emergency handoff preparation"
+    ],
+    "defaultPrompt": "Verify all three Usage Guard continuity protections."
   }
 }

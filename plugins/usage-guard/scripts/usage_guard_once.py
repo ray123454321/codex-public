@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""One-shot Codex usage guard for Stop hooks.
+"""One-shot quota-recovery and handoff component for Usage Guard hooks.
 
 This script intentionally does not run as a daemon and does not poll. Codex
 invokes it at Stop hook time; it reads the freshest structured session event and
@@ -53,7 +53,7 @@ DEFAULT_CONFIG = {
     "log_below_threshold": False,
     "notify": True,
     "notify_on_redeem_success": False,
-    "auto_redeem": False,
+    "auto_redeem": True,
     "redeem_strategy": "chatgpt_backend",
     "redeem_command": None,
     "redeem_timeout_ms": 5000,
